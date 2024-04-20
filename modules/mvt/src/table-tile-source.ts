@@ -15,14 +15,13 @@ import {Stats, Stat} from '@probe.gl/stats';
 
 import type {ProtoFeature} from './lib/vector-tiler/features/proto-feature';
 import type {ProtoTile} from './lib/vector-tiler/proto-tile';
-import {convert} from './lib/vector-tiler/features/convert-feature'; // GeoJSON conversion and preprocessing
+import {createProtoTile} from './lib/vector-tiler/proto-tile';
+import {transformTile} from './lib/vector-tiler/transform-tile'; // coordinate transformation
+import {convertTileToGeoJSON} from './lib/vector-tiler/tile-to-geojson'; // tile clipping and wrapping
+import {convertFeaturesToProtoFeature} from './lib/vector-tiler/features/convert-feature';
 import {clipFeatures} from './lib/vector-tiler/features/clip-features'; // stripe clipping algorithm
 import {wrapFeatures} from './lib/vector-tiler/features/wrap-features'; // date line processing
-import {transformTile} from './lib/vector-tiler/transform-tile'; // coordinate transformation
-import {createTile} from './lib/vector-tiler/proto-tile'; // final simplified tile generation
 
-import {projectToLngLat} from './lib/utils/geometry-utils';
-import {convertToLocalCoordinates} from './lib/utils/geometry-utils';
 
 /** Options to configure tiling */
 export type TableTileSourceProps = VectorTileSourceProps & {
@@ -80,7 +79,7 @@ export class TableTileSource implements VectorTileSource<any> {
     debug: 0 // logging level (0, 1 or 2)
   };
 
-  /** Global stats for all TableTileSources */
+  /** Global stats for all ProtoTileSources */
   static stats = new Stats({
     id: 'table-tile-source-all',
     stats: [new Stat('count', 'tiles'), new Stat('count', 'features')]
@@ -167,12 +166,12 @@ export class TableTileSource implements VectorTileSource<any> {
    * @note Application must await `source.ready` before calling sync methods.
    */
   getTileSync(tileIndex: {z: number; x: number; y: number}): GeoJSONTable | null {
-    const rawTile = this.getRawTile(tileIndex);
-    if (!rawTile) {
+    const protoTile = this.getProtoTile(tileIndex);
+    if (!protoTile) {
       return null;
     }
 
-    return convertToGeoJSONTable(rawTile, {
+    return convertTileToGeoJSON(protoTile, {
       coordinates: this.props.coordinates,
       tileIndex,
       extent: this.props.extent
@@ -195,7 +194,7 @@ export class TableTileSource implements VectorTileSource<any> {
 
     // projects and adds simplification info
     log.time(1, 'preprocess table')();
-    let features = convert(table, this.props);
+    let features = convertFeaturesToProtoFeature(table, this.props);
     log.timeEnd(1, 'preprocess table')();
 
     // wraps features (ie extreme west and extreme east)
@@ -223,7 +222,7 @@ export class TableTileSource implements VectorTileSource<any> {
    * @note Application must await `source.ready` before calling sync methods.
    */
   // eslint-disable-next-line complexity, max-statements
-  getRawTile(tileIndex: {z: number; x: number; y: number}): ProtoTile | null {
+  getProtoTile(tileIndex: {z: number; x: number; y: number}): ProtoTile | null {
     const {z, y} = tileIndex;
     let {x} = tileIndex;
     // z = +z;
@@ -237,7 +236,7 @@ export class TableTileSource implements VectorTileSource<any> {
     }
 
     const z2 = 1 << z;
-    x = (x + z2) & (z2 - 1); // wrap tile x coordinate
+    x = (x + z2) & (z2 - 1); // wrapFeatures tile x coordinate
 
     const id = toID(z, x, y);
     if (this.tiles[id]) {
@@ -258,7 +257,7 @@ export class TableTileSource implements VectorTileSource<any> {
       parent = this.tiles[toID(z0, x0, y0)];
     }
 
-    if (!parent || !parent.source) {
+    if (!parent || !parent.sourceFeatures) {
       return null;
     }
 
@@ -266,7 +265,7 @@ export class TableTileSource implements VectorTileSource<any> {
     log.log(1, 'found parent tile z%d-%d-%d', z0, x0, y0)();
     log.time(1, 'drilling down')();
 
-    this.splitTile(parent.source, z0, x0, y0, z, x, y);
+    this.splitTile(parent.sourceFeatures, z0, x0, y0, z, x, y);
 
     log.timeEnd(1, 'drilling down')();
 
@@ -307,7 +306,7 @@ export class TableTileSource implements VectorTileSource<any> {
       if (!tile) {
         log.time(2, 'tile creation')();
 
-        tile = this.tiles[id] = createTile(features, z, x, y, this.props);
+        tile = this.tiles[id] = createProtoTile(features, z, x, y, this.props);
         this.tileCoords.push({z, x, y});
 
         const key = `z${z}`;
@@ -337,9 +336,9 @@ export class TableTileSource implements VectorTileSource<any> {
       }
 
       // save reference to original geometry in tile so that we can drill down later if we stop now
-      tile.source = features;
+      tile.sourceFeatures = features;
 
-      /** eslint-disable no-continue */
+      /* eslint-disable no-continue */
 
       // if it's the first-pass tiling
       if (cz === undefined) {
@@ -361,7 +360,7 @@ export class TableTileSource implements VectorTileSource<any> {
       }
 
       // if we slice further down, no need to keep source geometry
-      tile.source = null;
+      tile.sourceFeatures = null;
 
       if (features.length === 0) continue;
 
@@ -409,6 +408,7 @@ export class TableTileSource implements VectorTileSource<any> {
 function toID(z, x, y): number {
   return ((1 << z) * y + x) * 32 + z;
 }
+/*
 
 // eslint-disable-next-line max-statements, complexity
 function convertToGeoJSONTable(
@@ -507,3 +507,4 @@ function convertToGeoJSONTable(
 
   return table;
 }
+*/

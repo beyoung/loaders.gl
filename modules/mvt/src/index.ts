@@ -11,7 +11,7 @@ export {TileJSONLoader} from './tilejson-loader';
 
 export {MVTSource} from './mvt-source';
 
-// TableTileSource
+// ProtoTileSource
 
 export type {TableTileSourceProps} from './table-tile-source';
 export {TableTileSource} from './table-tile-source';
